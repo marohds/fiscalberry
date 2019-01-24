@@ -58,6 +58,11 @@ class TraductorFiscal(TraductorInterface):
             for item in items:
               self._imprimirItem(**item)
 
+            if self.comando.DEFAULT_DRIVER and self.comando.DEFAULT_DRIVER == "Epson":
+              #en Epson, despues de mandar los items, necesitamos checkear los subtotales
+              #para evitar que el total en factura A sea unos centavos menor por los redondeos de números periódicos.
+              self.comando.checkSubtotals()
+
             if pagos:
               for pago in pagos:
                 self._imprimirPago(**pago)

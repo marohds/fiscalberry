@@ -25,12 +25,14 @@ class EpsonComandos(ComandoFiscalInterface):
 
     DEBUG = True
 
+    subtotal = 0
+
     CMD_OPEN_FISCAL_RECEIPT = 0x40
     CMD_OPEN_BILL_TICKET = 0x60
     ## CMD_PRINT_TEXT_IN_FISCAL = (0x41, 0x61)
     CMD_PRINT_TEXT_IN_FISCAL = 0x41
     CMD_PRINT_LINE_ITEM = (0x42, 0x62)
-    CMD_PRINT_SUBTOTAL = (0x43, 0x63)
+    CMD_SUBTOTAL = 0x63
     CMD_ADD_PAYMENT = (0x44, 0x64)
     CMD_CLOSE_FISCAL_RECEIPT = (0x45, 0x65)
     CMD_DAILY_CLOSE = 0x39
@@ -251,12 +253,19 @@ class EpsonComandos(ComandoFiscalInterface):
             # enviar con el iva incluido 
             priceUnitStr = str(int(round(price * 100, 0)))
         else:
-            if self.model == "tm-220-af" or self.model == "tm-t900fa" or self.model == 'sm-srp-270':
-                # enviar sin el iva (factura A)
+            if self.model == "tm-220-af" or self.model == "tm-t900fa":
                 priceUnitStr = "%0.4f" % (price / ((100.0 + iva) / 100.0))
+            if self.model == 'sm-srp-270':
+                # enviar sin el iva (factura A)
+                priceUnit = round(price / 1.21, 5)
+                print "ANTES ", priceUnit
+                self.subtotal += quantity * priceUnit
+                priceUnitStr = "%0.5f" % (price / 1.21)
+                print "DESPUES ", priceUnitStr
             else:
                 # enviar sin el iva (factura A)
                 priceUnitStr = str(int(round((price / ((100 + iva) / 100)) * 100, 0)))
+
 
         if self.model == 'tm-2000-af':
             #le restamos dos ceros, ya que esta fiscal usa el comando @TIQUEITEM en lugar de @TIQUEITEM2 y dicho comando acepta 2 decimales en lugar de 4.
@@ -279,10 +288,49 @@ class EpsonComandos(ComandoFiscalInterface):
         return reply
 
     def addPayment(self, description, payment, type_payment = "T"):
-        paymentStr = str(int(payment * 100))
+        if payment < 1:
+            paymentStr = str(float(payment * 100.0))
+        else:
+            paymentStr = str(int(payment * 100.0))
+        print "paymenstr: ", paymentStr
         status = self._sendCommand(self.CMD_ADD_PAYMENT[self._getCommandIndex()],
                                    [formatText(description)[:20], paymentStr, type_payment])
         return status
+
+    def _getSubtotal(self):
+        #con el caracter N no se imprime el subtotal y solo te manda la info. 
+        #Pero igualmente te pide que pongas una descripción, en este caso: "Subtotal".
+        subtotal = self._sendCommand(self.CMD_SUBTOTAL, ["N", "Subtotal"]) 
+        return subtotal
+
+    def checkSubtotals(self):
+        if self._currentDocumentType != "A" or self.model != "sm-srp-270":
+            #ajuste por redondeo compatible con la Samsung Bixolon SRP270
+            #Si es B o C, no necesitamos checkear nada ya que mandamos todo con IVA.
+            return True
+        print "nuestro subtotal sin redondear: ", self.subtotal
+        self.subtotal = round(self.subtotal, 2)
+        subtotalComputado = self._getSubtotal()
+        print "fiscal subtotal  ", subtotalComputado[9]
+        subtotalComputado = subtotalComputado[9] #nos envía un dict con otros datos, pero solo necesitamos el subtotal.
+        #el dato que tomamos, es el subtotal en string de 12 caracteres que representan 10 enteros y 2 decimales.
+        #Viene sin punto entre los decimales y el entero, así que se lo añadimos para parsearlo parsearlo a float.
+        subtotalComputado = float(subtotalComputado[:10] + '.' + subtotalComputado[10:])
+        print subtotalComputado
+        print "el SUBTOTAL NUESTRO: ", self.subtotal
+        print "EL SUBTOTAL DE LA FISCAL: ", subtotalComputado
+        #puede haber variaciones por el redondeo de los números que son periódicos.
+        if subtotalComputado > self.subtotal:
+            #si el subtotal que nos da la fiscal, es mayor que nuestro subtotal...
+            #ajustamos con un pequeño descuento.
+            diferencia = round(subtotalComputado - self.subtotal, 2)
+            print "la diferencia es de: ", diferencia
+            return self.addPayment("Ajuste por redondeo", diferencia, "D")
+        elif subtotalComputado < self.subtotal:
+            #sí es al revés, ajustamos con un pequeño recargo.
+            diferencia = round(self.subtotal - subtotalComputado, 2)
+            print "la diferencia es de: ", diferencia
+            return self.addPayment("Ajuste por redondeo", diferencia, "R")
 
     def addPerception(self, description, amount):
         tipoPerc = 'O'
@@ -303,6 +351,17 @@ class EpsonComandos(ComandoFiscalInterface):
             @param amount       Importe (sin iva en FC A, sino con IVA)
             @param iva          Porcentaje de Iva
             @param negative True->Descuento, False->Recargo"""
+
+        if not iva:
+            iva = 21.0
+
+        print amount
+        print iva
+
+        if self._currentDocumentType == "A" and (self.model == "tm-220-af" or self.model == "tm-t900fa" or self.model == 'sm-srp-270'):
+            # enviar sin el iva (factura A)
+            amount = round(amount / ((100.0 + 21.0) / 100.0), 5)
+
         if negative:
             if not description:
                 description = "Descuento"
