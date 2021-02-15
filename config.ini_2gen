@@ -1,0 +1,16 @@
+[SERVIDOR]
+puerto = 12000
+discover_url = 
+ssl_crt_path = 
+ssl_key_path = 
+ip_privada = 192.168.0.48
+uuid = 9f1064e68b30
+
+[IMPRESORA_FISCAL]
+driver = Json
+marca = Hasar2Gen
+host = 192.168.0.100
+after_port = fiscal.json
+user = 9999
+password = 
+
